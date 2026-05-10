@@ -1,9 +1,7 @@
--- crimson | Rivals (simple skin changer + ESP)
+-- crimson | Rivals ·
 local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
 local Players = game:GetService("Players")
-local RS = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
-local UIS = game:GetService("UserInputService")
 local MaterialService = game:GetService("MaterialService")
 local LP = Players.LocalPlayer
 local camera = workspace.CurrentCamera
@@ -14,13 +12,8 @@ local Cfg = {
     SkinEnabled = false,
     SelectedWeapon = nil,
     SelectedWrap = nil,
-    SelectedMaterial = "Metal",
-    UseColor = false,
-    SkinColor = Color3.fromRGB(255,255,255),
-    UseTransparency = false,
-    SkinTransparency = 0.3,
-    UseReflectance = false,
-    SkinReflectance = 0.2,
+    SelectedSkin = nil,
+    ApplyAll = false,
 
     ESP_Enabled = false,
     ESP_Boxes = true,
@@ -30,94 +23,152 @@ local Cfg = {
     ESP_Tracers = true,
     ESP_HeadDot = true,
     ESP_TeamCheck = true,
-    ESP_VisCheck = false,
-    ESP_EnemyColor = Color3.fromRGB(255,80,80),
-    ESP_TeammateColor = Color3.fromRGB(80,180,255),
+    ESP_EnemyColor = Color3.fromRGB(255, 80, 80),
+    ESP_TeammateColor = Color3.fromRGB(80, 180, 255),
 }
 
--- ====================== ASSET REFRESH ======================
-local WeaponOptions = {}
-local WrapOptions = {}
-local ColorOptions = {
-    "White", "Red", "Blue", "Green", "Yellow", "Orange", "Purple", "Pink",
-    "Black", "Grey", "Cyan", "Gold", "Silver"
-}
-local ColorValues = {
-    White = Color3.new(1,1,1), Red = Color3.new(1,0,0), Blue = Color3.new(0,0,1),
-    Green = Color3.new(0,1,0), Yellow = Color3.new(1,1,0), Orange = Color3.new(1,0.5,0),
-    Purple = Color3.new(0.5,0,1), Pink = Color3.new(1,0.4,1), Black = Color3.new(0,0,0),
-    Grey = Color3.new(0.5,0.5,0.5), Cyan = Color3.new(0,1,1), Gold = Color3.new(1,0.85,0),
-    Silver = Color3.new(0.75,0.75,0.75)
-}
+-- ====================== ASSET REFERENCES ======================
+local Weapons = {}        -- table of weapon Model instances (templates)
+local WrapTextures = {}   -- table of WrapTexture Folder instances
+local WrapMaterials = {}  -- table of MaterialVariant instances
+local WeaponNames = {}
+local WrapNames = {}
+local SkinNames = {}
 
 local function RefreshAssets()
     local ps = LP:FindFirstChild("PlayerScripts")
     local assets = ps and ps:FindFirstChild("Assets")
     local vms = assets and assets:FindFirstChild("ViewModels")
-    local weps = vms and vms:FindFirstChild("Weapons")
-    local wraps = assets and assets:FindFirstChild("WrapTextures")
+    local wepsFolder = vms and vms:FindFirstChild("Weapons")
+    local wrapsFolder = assets and assets:FindFirstChild("WrapTextures")
 
-    WeaponOptions = {}
-    if weps then
-        for _, w in ipairs(weps:GetChildren()) do if w:IsA("Model") then table.insert(WeaponOptions, w.Name) end end
+    Weapons = {}
+    if wepsFolder then
+        local waited = 0
+        while #wepsFolder:GetChildren() == 0 and waited < 30 do
+            task.wait(0.1)
+            waited = waited + 1
+        end
+        for _, v in ipairs(wepsFolder:GetChildren()) do
+            if v:IsA("Model") then table.insert(Weapons, v) end
+        end
     end
-    WrapOptions = {}
-    if wraps then
-        for _, w in ipairs(wraps:GetChildren()) do table.insert(WrapOptions, w.Name) end
+
+    WrapTextures = {}
+    if wrapsFolder then
+        local waited = 0
+        while #wrapsFolder:GetChildren() == 0 and waited < 30 do
+            task.wait(0.1)
+            waited = waited + 1
+        end
+        for _, v in ipairs(wrapsFolder:GetChildren()) do
+            table.insert(WrapTextures, v)
+        end
     end
-    if #WeaponOptions == 0 then WeaponOptions = {"(no weapons)"} end
-    if #WrapOptions == 0 then WrapOptions = {"(no wraps)"} end
+
+    WeaponNames = {}
+    for _, v in ipairs(Weapons) do table.insert(WeaponNames, v.Name) end
+    if #WeaponNames == 0 then WeaponNames = {"(equip a weapon first)"} end
+
+    WrapMaterials = {}
+    SkinNames = {}
+    local wrapTexNames = {}
+    for _, v in ipairs(WrapTextures) do wrapTexNames[v.Name] = true end
+    for _, v in ipairs(MaterialService.Wraps:GetChildren()) do
+        table.insert(WrapMaterials, v)
+        if not wrapTexNames[v.Name] then
+            table.insert(SkinNames, v.Name)
+        end
+    end
+    if #SkinNames == 0 then SkinNames = {"(none)"} end
+
+    WrapNames = {}
+    local matNames = {}
+    for _, v in ipairs(WrapMaterials) do matNames[v.Name] = true end
+    for _, v in ipairs(WrapTextures) do
+        if not matNames[v.Name] then
+            table.insert(WrapNames, v.Name)
+        end
+    end
+    if #WrapNames == 0 then WrapNames = {"(none)"} end
 end
 
--- ====================== SKIN APPLICATION ======================
-local function ApplySkin()
-    if not Cfg.SkinEnabled then return end
-    local ps = LP:FindFirstChild("PlayerScripts")
-    local vms = ps and ps.Assets and ps.Assets.ViewModels
-    local weps = vms and vms.Weapons
-    if not weps then return end
+-- ====================== APPLY SKIN TO A SINGLE MODEL ======================
+local function ApplyToModel(model)
+    for _, part in ipairs(model:GetDescendants()) do
+        if not part:IsA("BasePart") or part.Transparency >= 1 then continue end
 
-    for _, weaponModel in ipairs(weps:GetChildren()) do
-        if weaponModel:IsA("Model") and (Cfg.SelectedWeapon == weaponModel.Name or Cfg.SelectedWeapon == "All") then
-            for _, part in ipairs(weaponModel:GetDescendants()) do
-                if part:IsA("BasePart") and part.Transparency < 1 then
-                    if Cfg.UseColor then part.Color = Cfg.SkinColor end
-                    if Cfg.UseTransparency then part.Transparency = Cfg.SkinTransparency end
-                    if Cfg.UseReflectance then part.Reflectance = Cfg.SkinReflectance end
-                    local mat = Enum.Material[Cfg.SelectedMaterial]
-                    if mat then part.Material = mat end
-
-                    -- Apply wrap texture
-                    if Cfg.SelectedWrap and Cfg.SelectedWrap ~= "(no wraps)" then
-                        -- Remove existing textures/decals
-                        for _, obj in ipairs(part:GetChildren()) do
-                            if obj:IsA("Texture") or obj:IsA("Decal") or obj:IsA("SurfaceAppearance") then
-                                obj:Destroy()
-                            end
-                        end
-                        -- Clone wrap assets onto part
-                        local wrapsFolder = ps.Assets.WrapTextures
-                        if wrapsFolder then
-                            for _, wrap in ipairs(wrapsFolder:GetChildren()) do
-                                if wrap.Name == Cfg.SelectedWrap then
-                                    for _, child in ipairs(wrap:GetDescendants()) do
-                                        if child:IsA("Texture") or child:IsA("Decal") or child:IsA("SurfaceAppearance") then
-                                            local clone = child:Clone()
-                                            clone.Parent = part
-                                        end
-                                    end
-                                    break
-                                end
-                            end
+        -- Material variant (Skin)
+        if Cfg.SelectedSkin and Cfg.SelectedSkin ~= "(none)" then
+            for _, mv in ipairs(WrapMaterials) do
+                if mv.Name == Cfg.SelectedSkin then
+                    part.Material = Enum.Material.Fabric
+                    part.MaterialVariant = mv.Name
+                    for _, child in ipairs(part:GetChildren()) do
+                        if child:IsA("Texture") or child:IsA("Decal") or child:IsA("SurfaceAppearance") then
+                            child:Destroy()
                         end
                     end
+                    break
+                end
+            end
+        end
+
+        -- Wrap texture
+        if Cfg.SelectedWrap and Cfg.SelectedWrap ~= "(none)" then
+            for _, wrap in ipairs(WrapTextures) do
+                if wrap.Name == Cfg.SelectedWrap then
+                    for _, child in ipairs(part:GetChildren()) do
+                        if child:IsA("Texture") or child:IsA("Decal") or child:IsA("SurfaceAppearance") then
+                            child:Destroy()
+                        end
+                    end
+                    for _, asset in ipairs(wrap:GetChildren()) do
+                        if asset:IsA("Decal") or asset:IsA("Texture") or asset:IsA("SurfaceAppearance") then
+                            local clone = asset:Clone()
+                            clone.Parent = part
+                        end
+                    end
+                    break
                 end
             end
         end
     end
 end
 
--- ====================== TEAM DETECTION ======================
+-- ====================== APPLY SKIN TO TEMPLATES + LIVE CAMERA MODELS ======================
+local function ApplySkin()
+    if not Cfg.SkinEnabled then return end
+
+    -- Apply to templates (for future spawns)
+    for _, weaponModel in ipairs(Weapons) do
+        if Cfg.ApplyAll or weaponModel.Name == Cfg.SelectedWeapon then
+            ApplyToModel(weaponModel)
+        end
+    end
+
+    -- Apply to live camera models (immediate update)
+    for _, obj in ipairs(camera:GetChildren()) do
+        if obj:IsA("Model") and not obj:FindFirstChild("Humanoid") then -- weapon models, not player
+            if Cfg.ApplyAll or obj.Name == Cfg.SelectedWeapon then
+                ApplyToModel(obj)
+            end
+        end
+    end
+end
+
+-- Hook: when a new weapon appears in the camera (respawn, pick‑up, re‑equip), skin it instantly
+camera.ChildAdded:Connect(function(obj)
+    if not Cfg.SkinEnabled then return end
+    if obj:IsA("Model") and not obj:FindFirstChild("Humanoid") then
+        if Cfg.ApplyAll or obj.Name == Cfg.SelectedWeapon then
+            task.wait(0.05)  -- tiny delay so the model is fully assembled
+            ApplyToModel(obj)
+        end
+    end
+end)
+
+-- ====================== ESP ======================
 local function isAlive()
     return LP.Character and LP.Character:FindFirstChild("Head") and LP.Character:FindFirstChild("Humanoid") and LP.Character.Humanoid.Health > 0
 end
@@ -129,12 +180,10 @@ end
 local function isEnemy(plr)
     if plr == LP then return false end
     if not Cfg.ESP_TeamCheck then return true end
-    local my = getTeam(LP)
-    local their = getTeam(plr)
+    local my, their = getTeam(LP), getTeam(plr)
     return my and their and my ~= their
 end
 
--- ====================== ESP ======================
 local ESP_Cache = {}
 local function UpdateESP()
     for _, d in pairs(ESP_Cache) do pcall(function() d:Remove() end) end
@@ -147,26 +196,16 @@ local function UpdateESP()
         local hrp, head = char and char:FindFirstChild("HumanoidRootPart"), char and char:FindFirstChild("Head")
         if not hrp or not head then continue end
 
-        local visOK = true
-        if Cfg.ESP_VisCheck then
-            local ray = RaycastParams.new()
-            ray.FilterType = Enum.RaycastFilterType.Exclude
-            ray.FilterDescendantsInstances = {LP.Character, char}
-            local r = workspace:Raycast(camera.CFrame.Position, (head.Position - camera.CFrame.Position).Unit * 500, ray)
-            visOK = not r or r.Instance:IsDescendantOf(char)
-        end
-        if not visOK then continue end
-
         local col = isEnemy(plr) and Cfg.ESP_EnemyColor or Cfg.ESP_TeammateColor
         local hum = char:FindFirstChild("Humanoid")
-        local hp = hum and hum.Health > 0 and hum.Health or 100
+        local hp = hum and hum.Health or 100
         local maxHp = hum and hum.MaxHealth or 100
         local health = math.floor(hp / maxHp * 100)
         local dist = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart") and math.floor((LP.Character.HumanoidRootPart.Position - hrp.Position).Magnitude) or 0
 
-        local headPos, vis = camera:WorldToViewportPoint(head.Position)
+        local headPos, onScreen = camera:WorldToViewportPoint(head.Position)
         local rootPos, _ = camera:WorldToViewportPoint(hrp.Position)
-        if not vis then continue end
+        if not onScreen then continue end
 
         local boxH = math.abs(headPos.Y - rootPos.Y) * 1.6
         local boxW = boxH * 0.4
@@ -174,8 +213,7 @@ local function UpdateESP()
         if Cfg.ESP_Boxes then
             local box = Drawing.new("Square")
             box.Visible = true; box.Color = col; box.Thickness = 1; box.Filled = false
-            box.Size = Vector2.new(boxW, boxH)
-            box.Position = Vector2.new(headPos.X - boxW/2, headPos.Y)
+            box.Size = Vector2.new(boxW, boxH); box.Position = Vector2.new(headPos.X - boxW/2, headPos.Y)
             ESP_Cache["box_"..plr.Name] = box
         end
         if Cfg.ESP_Names then
@@ -193,11 +231,10 @@ local function UpdateESP()
             ESP_Cache["hp_"..plr.Name] = bar
         end
         if Cfg.ESP_Distance then
-            local distTxt = Drawing.new("Text")
-            distTxt.Visible = true; distTxt.Text = dist.."m"; distTxt.Size = 11; distTxt.Center = true; distTxt.Outline = true
-            distTxt.Color = Color3.new(1,1,1)
-            distTxt.Position = Vector2.new(headPos.X, headPos.Y + boxH + 5)
-            ESP_Cache["dist_"..plr.Name] = distTxt
+            local dt = Drawing.new("Text")
+            dt.Visible = true; dt.Text = dist.."m"; dt.Size = 11; dt.Center = true; dt.Outline = true
+            dt.Color = Color3.new(1,1,1); dt.Position = Vector2.new(headPos.X, headPos.Y + boxH + 5)
+            ESP_Cache["dist_"..plr.Name] = dt
         end
         if Cfg.ESP_Tracers then
             local line = Drawing.new("Line")
@@ -219,85 +256,69 @@ local Window = Rayfield:CreateWindow({
     Name = "crimson | Rivals",
     LoadingTitle = "crimson hub",
     LoadingSubtitle = "by crimson",
-    Theme = "Bloom"
+    Theme = "Bloom",
 })
-local SkinTab = Window:CreateTab("🎨 Skins", 4483362458)
-local ESPTab = Window:CreateTab("👁️ ESP", 4483362458)
+local SkinTab = Window:CreateTab("Skins", 4483362458)
+local ESPTab = Window:CreateTab("ESP", 4483362458)
 
 task.wait(1)
 RefreshAssets()
 
--- Weapon / Wrap dropdowns
 local wepDropdown = SkinTab:CreateDropdown({
     Name = "Weapon",
-    Options = WeaponOptions,
-    CurrentOption = WeaponOptions[1] or "(none)",
-    Callback = function(v) Cfg.SelectedWeapon = v[1] ; ApplySkin() end
+    Options = WeaponNames,
+    CurrentOption = WeaponNames[1] or "(none)",
+    Callback = function(v) Cfg.SelectedWeapon = v[1]; if Cfg.SkinEnabled then ApplySkin() end end
 })
+
 local wrapDropdown = SkinTab:CreateDropdown({
     Name = "Wrap",
-    Options = WrapOptions,
-    CurrentOption = WrapOptions[1] or "(none)",
-    Callback = function(v) Cfg.SelectedWrap = v[1] ; ApplySkin() end
+    Options = WrapNames,
+    CurrentOption = "(none)",
+    Callback = function(v) Cfg.SelectedWrap = v[1]; if Cfg.SkinEnabled then ApplySkin() end end
 })
 
--- Material dropdown
-local matDropdown = SkinTab:CreateDropdown({
-    Name = "Material",
-    Options = {"Metal","Plastic","SmoothPlastic","Wood","CorrodedMetal","Foil","Ice","Marble","Neon","Glass","ForceField","Grass","Sand","Fabric","Leather"},
-    CurrentOption = "Metal",
-    Callback = function(v) Cfg.SelectedMaterial = v[1] ; ApplySkin() end
+local skinDropdown = SkinTab:CreateDropdown({
+    Name = "Skin (Material)",
+    Options = SkinNames,
+    CurrentOption = "(none)",
+    Callback = function(v) Cfg.SelectedSkin = v[1]; if Cfg.SkinEnabled then ApplySkin() end end
 })
 
--- Color selection via dropdown
-SkinTab:CreateDropdown({
-    Name = "Color",
-    Options = ColorOptions,
-    CurrentOption = "White",
-    Callback = function(v)
-        Cfg.UseColor = true
-        Cfg.SkinColor = ColorValues[v[1]]
-        ApplySkin()
-    end
+SkinTab:CreateToggle({
+    Name = "Apply to All Weapons",
+    CurrentValue = false,
+    Callback = function(v) Cfg.ApplyAll = v; if Cfg.SkinEnabled then ApplySkin() end end
 })
 
--- Transparency slider
-SkinTab:CreateToggle({Name = "Transparency On", CurrentValue = false, Callback = function(v) Cfg.UseTransparency = v ; ApplySkin() end})
-SkinTab:CreateSlider({Name = "Transparency", Range={0,100}, Increment=5, CurrentValue=30, Callback = function(v) Cfg.SkinTransparency = v/100 ; ApplySkin() end})
+SkinTab:CreateToggle({
+    Name = "Enable Skin Changer",
+    CurrentValue = false,
+    Callback = function(v) Cfg.SkinEnabled = v; if v then ApplySkin() end end
+})
 
--- Reflectance slider
-SkinTab:CreateToggle({Name = "Reflectance On", CurrentValue = false, Callback = function(v) Cfg.UseReflectance = v ; ApplySkin() end})
-SkinTab:CreateSlider({Name = "Reflectance", Range={0,100}, Increment=5, CurrentValue=20, Callback = function(v) Cfg.SkinReflectance = v/100 ; ApplySkin() end})
-
--- Skin master toggle
-SkinTab:CreateToggle({Name = "Enable Skin Changer", CurrentValue = false, Callback = function(v) Cfg.SkinEnabled = v ; ApplySkin() end})
-
--- Refresh button
-SkinTab:CreateButton({Name = "Refresh Assets", Callback = function()
+SkinTab:CreateButton({Name = "Refresh", Callback = function()
     RefreshAssets()
-    wepDropdown:Set(WeaponOptions)
-    wrapDropdown:Set(WrapOptions)
-    Rayfield:Notify({Title="Refreshed",Content="Weapons: "..#WeaponOptions..", Wraps: "..#WrapOptions})
+    wepDropdown:Set(WeaponNames)
+    wrapDropdown:Set(WrapNames)
+    skinDropdown:Set(SkinNames)
+    Rayfield:Notify({Title="Refreshed", Content="Weapons: "..#WeaponNames.." · Wraps: "..#WrapNames.." · Skins: "..#SkinNames})
 end})
 
--- Randomize button
 SkinTab:CreateButton({Name = "Randomize", Callback = function()
-    if #ColorOptions > 0 then
-        local randColor = ColorOptions[math.random(#ColorOptions)]
-        Cfg.SkinColor = ColorValues[randColor]
+    if #WrapNames > 0 and WrapNames[1] ~= "(none)" then
+        Cfg.SelectedWrap = WrapNames[math.random(#WrapNames)]
+        wrapDropdown:Set({Cfg.SelectedWrap})
     end
-    Cfg.UseTransparency = math.random() > 0.5
-    Cfg.SkinTransparency = math.random() * 0.6
-    Cfg.UseReflectance = math.random() > 0.5
-    Cfg.SkinReflectance = math.random() * 0.5
-    if #WrapOptions > 0 then Cfg.SelectedWrap = WrapOptions[math.random(#WrapOptions)] end
-    Cfg.SelectedMaterial = matDropdown.CurrentOption[1] or "Metal"
-    Cfg.UseColor = true
+    if #SkinNames > 0 and SkinNames[1] ~= "(none)" then
+        Cfg.SelectedSkin = SkinNames[math.random(#SkinNames)]
+        skinDropdown:Set({Cfg.SelectedSkin})
+    end
     ApplySkin()
-    Rayfield:Notify({Title="Randomized",Content="Skin applied"})
+    Rayfield:Notify({Title="Randomized", Content="Wrap: "..(Cfg.SelectedWrap or "none").." · Skin: "..(Cfg.SelectedSkin or "none")})
 end})
 
--- ESP Tab (simplified)
+-- ESP Tab
 ESPTab:CreateToggle({Name = "ESP Enabled", CurrentValue = false, Callback = function(v) Cfg.ESP_Enabled = v end})
 ESPTab:CreateToggle({Name = "Team Check", CurrentValue = true, Callback = function(v) Cfg.ESP_TeamCheck = v end})
 ESPTab:CreateToggle({Name = "Boxes", CurrentValue = true, Callback = function(v) Cfg.ESP_Boxes = v end})
@@ -306,16 +327,7 @@ ESPTab:CreateToggle({Name = "Health", CurrentValue = true, Callback = function(v
 ESPTab:CreateToggle({Name = "Distance", CurrentValue = true, Callback = function(v) Cfg.ESP_Distance = v end})
 ESPTab:CreateToggle({Name = "Tracers", CurrentValue = true, Callback = function(v) Cfg.ESP_Tracers = v end})
 ESPTab:CreateToggle({Name = "Head Dot", CurrentValue = true, Callback = function(v) Cfg.ESP_HeadDot = v end})
-ESPTab:CreateToggle({Name = "Visible Only", CurrentValue = false, Callback = function(v) Cfg.ESP_VisCheck = v end})
 
--- Main loop
 RunService.RenderStepped:Connect(UpdateESP)
 
--- Re-apply skin periodically (in case new weapon appears)
-task.spawn(function()
-    while task.wait(0.5) do
-        if Cfg.SkinEnabled then ApplySkin() end
-    end
-end)
-
-Rayfield:Notify({Title = "crimson", Content = "Press 'Refresh Assets' if dropdowns are empty"})
+Rayfield:Notify({Title="crimson | Rivals", Content=""})
